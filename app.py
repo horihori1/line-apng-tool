@@ -29,11 +29,9 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count, total_fr
     LINE広告仕様準拠 APNG生成 (キャンバス方式・エラー対策版)
     """
     # 1. 土台となるキャンバスを作成 (RGBA)
-    # これにより、どんな画像が来ても必ず600x400の同じ形式からスタートできる
     canvas = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), bg_color)
     
     # 2. 元画像をリサイズして中央に配置
-    # ImageOps.padを使わず、手動で計算して貼り付ける（一番確実）
     base_img = base_image.convert("RGBA")
     
     # 比率を維持したまま、枠に収まる最大サイズを計算
@@ -44,10 +42,10 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count, total_fr
     paste_y = (TARGET_HEIGHT - base_img.height) // 2
     
     # キャンバスに貼り付け
-    canvas.paste(base_img, (paste_x, paste_y), base_img) # 第3引数はマスク(透過維持)
+    canvas.paste(base_img, (paste_x, paste_y), base_img)
     
-    # これがベース画像になる
-    final_base = canvas.convert("RGB") # 広告用なのでRGB(不透明)に統一してエラーを防ぐ
+    # ベース画像をRGB(不透明)に統一してエラーを防ぐ
+    final_base = canvas.convert("RGB")
 
     # 3. アイコン作成
     icon_size = int(TARGET_HEIGHT * 0.25)
@@ -64,8 +62,6 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count, total_fr
     # 4. フレーム生成
     # ONフレーム (チェックあり)
     frame_on = final_base.copy()
-    
-    # アイコンを貼り付ける際、RGBモードの上にRGBAを貼るための処理
     for pos in positions:
         frame_on.paste(checkmark_icon, pos, checkmark_icon)
         
@@ -89,8 +85,7 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count, total_fr
     duration_per_frame = int((total_duration_sec * 1000) / total_frames)
     output_io = io.BytesIO()
     
-    # 軽量化処理 (RGBモードからPモードへ変換)
-    # すべて同じRGBモードから変換するため "images do not match" エラーは起きない
+    # 軽量化処理
     frames_quantized = [f.quantize(colors=256, method=2) for f in frames]
 
     frames_quantized[0].save(
@@ -136,5 +131,41 @@ if uploaded_file:
         st.subheader("元画像")
         st.image(image, use_container_width=True)
 
-    with col2
-    
+    with col2:
+        # ここがエラーの箇所でした（コロンを追加済み）
+        st.subheader("プレビュー")
+        if st.button("変換・生成する", type="primary"):
+            with st.spinner("生成中..."):
+                try:
+                    # 生成処理
+                    apng_data = create_strict_line_apng(
+                        image, 
+                        duration, 
+                        loop_num, 
+                        total_frames, 
+                        bg_color_hex
+                    )
+                    
+                    # 容量チェック
+                    kb_size = len(apng_data) / 1024
+                    st.image(apng_data, use_container_width=True)
+                    
+                    st.markdown(f"**仕上がり: {kb_size:.1f}KB / {total_frames}フレーム**")
+                    
+                    if kb_size <= 300:
+                        st.success("✅ 審査基準OK")
+                    else:
+                        st.warning("⚠️ 300KBを超えました。フレーム数を減らすか、秒数を短くしてください。")
+
+                    # ファイル名生成
+                    file_name = f"line_{total_frames}frames_{int(duration)}s.png"
+                    
+                    st.download_button(
+                        label="📥 APNGをダウンロード",
+                        data=apng_data,
+                        file_name=file_name,
+                        mime="image/png"
+                    )
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {e}")
+                    st.error("別の画像を試すか、フレーム数を減らしてみてください。")
