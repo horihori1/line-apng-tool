@@ -26,7 +26,7 @@ def create_checkmark_icon(size):
 
 def create_strict_line_apng(base_image, total_duration_sec, loop_count, total_frames, bg_color):
     """
-    LINE広告仕様準拠 APNG生成 (キャンバス方式・エラー対策版)
+    LINE広告仕様準拠 APNG生成 (パレット統一・完全エラー対策版)
     """
     # 1. 土台となるキャンバスを作成 (RGBA)
     canvas = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), bg_color)
@@ -44,7 +44,7 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count, total_fr
     # キャンバスに貼り付け
     canvas.paste(base_img, (paste_x, paste_y), base_img)
     
-    # ベース画像をRGB(不透明)に統一してエラーを防ぐ
+    # ベース画像をRGB(不透明)に統一
     final_base = canvas.convert("RGB")
 
     # 3. アイコン作成
@@ -68,31 +68,39 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count, total_fr
     # OFFフレーム (チェックなし)
     frame_off = final_base.copy()
 
+    # ---【重要】パレット統一処理 ---
+    # ここでエラー "images do not match" を防ぎます。
+    # frame_on（色が一番多いコマ）を基準にして、パレット（色見本）を作成します。
+    # method=2 (Fast Octree) を使用
+    p_frame_on = frame_on.quantize(colors=256, method=2)
+    
+    # frame_off（色が少ないコマ）も、強制的に frame_on と同じパレットを使わせます。
+    # これにより、データの構造が完全に一致し、エラーが消えます。
+    p_frame_off = frame_off.quantize(palette=p_frame_on)
+
     frames = []
     
     # フレーム数を割り振り
     half_frames = total_frames // 2
     remainder = total_frames % 2
     
-    # 前半 (ON)
+    # 前半 (ON) - パレット変換済みの画像を追加
     for _ in range(half_frames + remainder):
-        frames.append(frame_on)
-    # 後半 (OFF)
+        frames.append(p_frame_on)
+    # 後半 (OFF) - パレット変換済みの画像を追加
     for _ in range(half_frames):
-        frames.append(frame_off)
+        frames.append(p_frame_off)
 
     # 5. 保存処理
     duration_per_frame = int((total_duration_sec * 1000) / total_frames)
     output_io = io.BytesIO()
     
-    # 軽量化処理
-    frames_quantized = [f.quantize(colors=256, method=2) for f in frames]
-
-    frames_quantized[0].save(
+    # すでにquantize（軽量化）済みなので、そのまま保存します
+    frames[0].save(
         output_io,
         format="PNG",
         save_all=True,
-        append_images=frames_quantized[1:],
+        append_images=frames[1:],
         duration=duration_per_frame,
         loop=loop_count,
         optimize=True,
@@ -109,7 +117,7 @@ st.set_page_config(page_title="LINE広告 APNG生成機", layout="centered")
 st.title("LINE広告(Small) 完全対応版")
 st.markdown("""
 **特徴:**
-* **どんな画像でもエラーが出ません** (キャンバス合成方式)
+* **どんな画像でもエラーが出ません** (パレット統一処理済み)
 * 元画像の画角を維持します（余白を追加）
 * フレーム数やループ数を細かく調整できます
 """)
@@ -119,53 +127,5 @@ st.sidebar.header("詳細設定")
 duration = st.sidebar.slider("アニメーション秒数", 1.0, 4.0, 2.0, 0.5)
 total_frames = st.sidebar.slider("フレーム数 (枚)", 5, 20, 10, 1)
 loop_num = st.sidebar.slider("ループ回数", 1, 4, 0, 1)
-bg_color_hex = st.sidebar.color_picker("余白の色 (背景色)", "#FFFFFF")
-
-uploaded_file = st.file_uploader("画像をアップロード", type=["jpg", "jpeg", "png"])
-
-if uploaded_file:
-    image = Image.open(uploaded_file)
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("元画像")
-        st.image(image, use_container_width=True)
-
-    with col2:
-        # ここがエラーの箇所でした（コロンを追加済み）
-        st.subheader("プレビュー")
-        if st.button("変換・生成する", type="primary"):
-            with st.spinner("生成中..."):
-                try:
-                    # 生成処理
-                    apng_data = create_strict_line_apng(
-                        image, 
-                        duration, 
-                        loop_num, 
-                        total_frames, 
-                        bg_color_hex
-                    )
-                    
-                    # 容量チェック
-                    kb_size = len(apng_data) / 1024
-                    st.image(apng_data, use_container_width=True)
-                    
-                    st.markdown(f"**仕上がり: {kb_size:.1f}KB / {total_frames}フレーム**")
-                    
-                    if kb_size <= 300:
-                        st.success("✅ 審査基準OK")
-                    else:
-                        st.warning("⚠️ 300KBを超えました。フレーム数を減らすか、秒数を短くしてください。")
-
-                    # ファイル名生成
-                    file_name = f"line_{total_frames}frames_{int(duration)}s.png"
-                    
-                    st.download_button(
-                        label="📥 APNGをダウンロード",
-                        data=apng_data,
-                        file_name=file_name,
-                        mime="image/png"
-                    )
-                except Exception as e:
-                    st.error(f"エラーが発生しました: {e}")
-                    st.error("別の画像を試すか、フレーム数を減らしてみてください。")
+bg_color_hex = st.sidebar.color_picker("余白の色
+                                       
