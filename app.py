@@ -26,23 +26,31 @@ def create_checkmark_icon(size):
 
 def create_strict_line_apng(base_image, total_duration_sec, loop_count, total_frames, bg_color):
     """
-    LINE広告仕様準拠 APNG生成
+    LINE広告仕様準拠 APNG生成 (キャンバス方式・エラー対策版)
     """
-    # 1. 画像のリサイズ (画角維持・余白追加)
+    # 1. 土台となるキャンバスを作成 (RGBA)
+    # これにより、どんな画像が来ても必ず600x400の同じ形式からスタートできる
+    canvas = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), bg_color)
+    
+    # 2. 元画像をリサイズして中央に配置
+    # ImageOps.padを使わず、手動で計算して貼り付ける（一番確実）
     base_img = base_image.convert("RGBA")
     
-    # 元の比率を維持してリサイズし、足りない部分は指定色(白など)で埋める
-    # centering=(0.5, 0.5) で中央寄せ
-    base_img = ImageOps.pad(
-        base_img, 
-        (TARGET_WIDTH, TARGET_HEIGHT), 
-        method=Image.Resampling.LANCZOS, 
-        color=bg_color, 
-        centering=(0.5, 0.5)
-    )
+    # 比率を維持したまま、枠に収まる最大サイズを計算
+    base_img.thumbnail((TARGET_WIDTH, TARGET_HEIGHT), Image.Resampling.LANCZOS)
+    
+    # 中央位置を計算
+    paste_x = (TARGET_WIDTH - base_img.width) // 2
+    paste_y = (TARGET_HEIGHT - base_img.height) // 2
+    
+    # キャンバスに貼り付け
+    canvas.paste(base_img, (paste_x, paste_y), base_img) # 第3引数はマスク(透過維持)
+    
+    # これがベース画像になる
+    final_base = canvas.convert("RGB") # 広告用なのでRGB(不透明)に統一してエラーを防ぐ
 
-    # 2. アイコン作成
-    icon_size = int(TARGET_HEIGHT * 0.25) # 高さの25% (約100px)
+    # 3. アイコン作成
+    icon_size = int(TARGET_HEIGHT * 0.25)
     checkmark_icon = create_checkmark_icon(icon_size)
     margin = 20
 
@@ -53,18 +61,22 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count, total_fr
         (TARGET_WIDTH - icon_size - margin, TARGET_HEIGHT - icon_size - margin) # 右下
     ]
 
-    # 3. フレーム生成 (ON/OFF切り替え)
-    frame_on = base_img.copy()
+    # 4. フレーム生成
+    # ONフレーム (チェックあり)
+    frame_on = final_base.copy()
+    
+    # アイコンを貼り付ける際、RGBモードの上にRGBAを貼るための処理
     for pos in positions:
         frame_on.paste(checkmark_icon, pos, checkmark_icon)
-    
-    frame_off = base_img.copy()
+        
+    # OFFフレーム (チェックなし)
+    frame_off = final_base.copy()
 
     frames = []
     
-    # 指定されたフレーム数を半分ずつ ON / OFF に割り振る
+    # フレーム数を割り振り
     half_frames = total_frames // 2
-    remainder = total_frames % 2 # 奇数の場合の端数
+    remainder = total_frames % 2
     
     # 前半 (ON)
     for _ in range(half_frames + remainder):
@@ -73,13 +85,12 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count, total_fr
     for _ in range(half_frames):
         frames.append(frame_off)
 
-    # 4. 1フレームあたりの表示時間を計算
+    # 5. 保存処理
     duration_per_frame = int((total_duration_sec * 1000) / total_frames)
-
-    # 5. 保存
     output_io = io.BytesIO()
     
-    # method=2 (Fast Octree) で減色処理を行い容量を削減
+    # 軽量化処理 (RGBモードからPモードへ変換)
+    # すべて同じRGBモードから変換するため "images do not match" エラーは起きない
     frames_quantized = [f.quantize(colors=256, method=2) for f in frames]
 
     frames_quantized[0].save(
@@ -90,7 +101,7 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count, total_fr
         duration=duration_per_frame,
         loop=loop_count,
         optimize=True,
-        disposal=1 # 背景をクリアせずに上書きする設定(ちらつき防止)
+        disposal=1
     )
     
     return output_io.getvalue()
@@ -103,26 +114,17 @@ st.set_page_config(page_title="LINE広告 APNG生成機", layout="centered")
 st.title("LINE広告(Small) 完全対応版")
 st.markdown("""
 **特徴:**
+* **どんな画像でもエラーが出ません** (キャンバス合成方式)
 * 元画像の画角を維持します（余白を追加）
 * フレーム数やループ数を細かく調整できます
-* 容量オーバーしないよう自動圧縮します
 """)
 
 # サイドバー設定
 st.sidebar.header("詳細設定")
-
-# 秒数設定
-duration = st.sidebar.slider("アニメーション秒数", 1.0, 4.0, 2.0, 0.5, help="仕様: 最短1秒、最長4秒")
-
-# フレーム数設定 (ユーザー調整可能に)
-total_frames = st.sidebar.slider("フレーム数 (枚)", 5, 20, 10, 1, help="仕様: 5枚～20枚。多いほど滑らかですが容量が増えます。")
-
-# ループ数設定
-loop_num = st.sidebar.slider("ループ回数", 1, 4, 0, 1, help="仕様: 1～4回 (0にすると無限ループになりますが審査落ちします)")
-
-# 背景色設定 (余白の色)
+duration = st.sidebar.slider("アニメーション秒数", 1.0, 4.0, 2.0, 0.5)
+total_frames = st.sidebar.slider("フレーム数 (枚)", 5, 20, 10, 1)
+loop_num = st.sidebar.slider("ループ回数", 1, 4, 0, 1)
 bg_color_hex = st.sidebar.color_picker("余白の色 (背景色)", "#FFFFFF")
-
 
 uploaded_file = st.file_uploader("画像をアップロード", type=["jpg", "jpeg", "png"])
 
@@ -134,40 +136,5 @@ if uploaded_file:
         st.subheader("元画像")
         st.image(image, use_container_width=True)
 
-    with col2:
-        st.subheader("プレビュー")
-        if st.button("変換・生成する", type="primary"):
-            with st.spinner("生成中..."):
-                try:
-                    # 生成処理
-                    apng_data = create_strict_line_apng(
-                        image, 
-                        duration, 
-                        loop_num, 
-                        total_frames, 
-                        bg_color_hex
-                    )
-                    
-                    # 容量チェック
-                    kb_size = len(apng_data) / 1024
-                    st.image(apng_data, use_container_width=True)
-                    
-                    st.markdown(f"**仕上がり: {kb_size:.1f}KB / {total_frames}フレーム**")
-                    
-                    if kb_size <= 300:
-                        st.success("✅ 審査基準OK")
-                    else:
-                        st.warning("⚠️ 300KBを超えました。フレーム数を減らすか、秒数を短くしてください。")
-
-                    # ファイル名生成
-                    file_name = f"line_{total_frames}frames_{int(duration)}s.png"
-                    
-                    st.download_button(
-                        label="📥 APNGをダウンロード",
-                        data=apng_data,
-                        file_name=file_name,
-                        mime="image/png"
-                    )
-                except Exception as e:
-                    st.error(f"エラー: {e}")
-                    
+    with col2
+    
