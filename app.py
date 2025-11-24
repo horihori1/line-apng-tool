@@ -30,7 +30,6 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count):
     LINE広告の仕様を強制的に守ったAPNGを作成する
     """
     # 1. 画像のリサイズ (600x400)
-    # ImageOps.fit を使い、画像の中心をトリミングして隙間なく埋める
     base_img = base_image.convert("RGBA")
     base_img = ImageOps.fit(base_img, (TARGET_WIDTH, TARGET_HEIGHT), method=Image.Resampling.LANCZOS)
 
@@ -46,10 +45,7 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count):
         (TARGET_WIDTH - icon_size - margin, TARGET_HEIGHT - icon_size - margin) # 右下
     ]
 
-    # 3. フレーム生成 (要件: 5～20フレーム)
-    # ここでは「10フレーム」作成します。
-    # 前半5フレーム: チェックあり / 後半5フレーム: チェックなし
-    
+    # 3. フレーム生成 (10フレーム)
     frame_on = base_img.copy()
     for pos in positions:
         frame_on.paste(checkmark_icon, pos, checkmark_icon)
@@ -57,23 +53,23 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count):
     frame_off = base_img.copy()
 
     frames = []
-    # ONを5枚追加
+    # ONを5枚
     for _ in range(5):
         frames.append(frame_on)
-    # OFFを5枚追加
+    # OFFを5枚
     for _ in range(5):
         frames.append(frame_off)
 
-    # 4. 1フレームあたりの表示時間を計算
-    # 指定秒数(ms) ÷ フレーム数(10)
+    # 4. 表示時間の計算
     duration_per_frame = int((total_duration_sec * 1000) / TOTAL_FRAMES)
 
-    # 5. 保存 (容量削減処理付き)
+    # 5. 保存 (エラー対策版)
     output_io = io.BytesIO()
     
-    # 色数を減らして300KB以下を確実にする (Quantize)
-    # APNGは容量が膨らみやすいため、画質を少し調整して容量優先にする
-    frames_quantized = [f.quantize(colors=128, method=2) for f in frames]
+    # 【修正点】
+    # quantize(減色)は行いますが、エラーの原因となる disposal 設定を削除しました。
+    # method=0 (MedianCut) は安定性が高いためこちらを使用します。
+    frames_quantized = [f.quantize(colors=128, method=0) for f in frames]
 
     frames_quantized[0].save(
         output_io,
@@ -81,9 +77,9 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count):
         save_all=True,
         append_images=frames_quantized[1:],
         duration=duration_per_frame,
-        loop=loop_count, # 指定されたループ数 (LINEは1~4)
-        optimize=True,
-        disposal=1
+        loop=loop_count,
+        optimize=False, # クラッシュ回避のためFalseに変更（quantizeで十分軽くなります）
+        # disposal=1  <-- これがクラッシュの原因だったので削除しました
     )
     
     return output_io.getvalue()
@@ -104,12 +100,11 @@ st.markdown("""
 # サイドバー設定
 st.sidebar.header("LINE広告設定")
 
-# 秒数設定 (1秒～4秒)
+# 秒数設定
 duration = st.sidebar.slider("アニメーション秒数", 1.0, 4.0, 2.0, 0.5, help="仕様: 最短1秒、最長4秒")
 
-# ループ数設定 (1回～4回)
+# ループ数設定
 loop_num = st.sidebar.slider("ループ回数", 1, 4, 0, 1, help="仕様: 1～4回 (無限ループ不可)")
-
 
 uploaded_file = st.file_uploader("画像をアップロード", type=["jpg", "jpeg", "png"])
 
@@ -125,26 +120,29 @@ if uploaded_file:
         st.subheader("プレビュー")
         if st.button("変換・生成する", type="primary"):
             with st.spinner("規格に合わせて変換中..."):
-                # 生成処理
-                apng_data = create_strict_line_apng(image, duration, loop_num)
-                
-                # 容量チェック
-                kb_size = len(apng_data) / 1024
-                st.image(apng_data, use_container_width=True)
-                
-                st.markdown(f"**仕上がりサイズ: {kb_size:.1f}KB**")
-                
-                if kb_size <= 300:
-                    st.success("✅ 審査基準OK (300KB以下)")
-                else:
-                    st.error("❌ 容量オーバー (画像が複雑すぎます)")
+                try:
+                    # 生成処理
+                    apng_data = create_strict_line_apng(image, duration, loop_num)
+                    
+                    # 容量チェック
+                    kb_size = len(apng_data) / 1024
+                    st.image(apng_data, use_container_width=True)
+                    
+                    st.markdown(f"**仕上がりサイズ: {kb_size:.1f}KB**")
+                    
+                    if kb_size <= 300:
+                        st.success("✅ 審査基準OK (300KB以下)")
+                    else:
+                        st.warning("⚠️ 容量が300KBを少し超えています。アニメーション秒数を短くするか、単純な画像を使用してください。")
 
-                # ファイル名にスペックを含める
-                file_name = f"line_600x400_{int(duration)}s_loop{loop_num}.png"
-                
-                st.download_button(
-                    label="📥 基準適合APNGをダウンロード",
-                    data=apng_data,
-                    file_name=file_name,
-                    mime="image/png"
-                )
+                    # ファイル名生成
+                    file_name = f"line_600x400_{int(duration)}s_loop{loop_num}.png"
+                    
+                    st.download_button(
+                        label="📥 基準適合APNGをダウンロード",
+                        data=apng_data,
+                        file_name=file_name,
+                        mime="image/png"
+                    )
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {e}")
