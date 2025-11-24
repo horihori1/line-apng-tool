@@ -63,13 +63,13 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count):
     # 4. 表示時間の計算
     duration_per_frame = int((total_duration_sec * 1000) / TOTAL_FRAMES)
 
-    # 5. 保存 (エラー対策版)
+    # 5. 保存 (エラー対策・決定版)
     output_io = io.BytesIO()
     
     # 【修正点】
-    # quantize(減色)は行いますが、エラーの原因となる disposal 設定を削除しました。
-    # method=0 (MedianCut) は安定性が高いためこちらを使用します。
-    frames_quantized = [f.quantize(colors=128, method=0) for f in frames]
+    # method=2 (Fast Octree) に戻しました。これはRGBA画像で有効な唯一の標準メソッドです。
+    # 最初のクラッシュの原因だった disposal 設定は削除したままにしています。
+    frames_quantized = [f.quantize(colors=128, method=2) for f in frames]
 
     frames_quantized[0].save(
         output_io,
@@ -78,8 +78,8 @@ def create_strict_line_apng(base_image, total_duration_sec, loop_count):
         append_images=frames_quantized[1:],
         duration=duration_per_frame,
         loop=loop_count,
-        optimize=False, # クラッシュ回避のためFalseに変更（quantizeで十分軽くなります）
-        # disposal=1  <-- これがクラッシュの原因だったので削除しました
+        optimize=False, # クラッシュ回避のためFalse (quantizeしてるので容量は減ります)
+        # disposal=1  <-- 削除済み (これが諸悪の根源でした)
     )
     
     return output_io.getvalue()
@@ -146,3 +146,4 @@ if uploaded_file:
                     )
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
+                    
