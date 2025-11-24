@@ -2,56 +2,41 @@ import streamlit as st
 from PIL import Image, ImageDraw
 import io
 
-# --- 設定 ---
+# --- 設定（LINE広告用） ---
 TARGET_WIDTH = 600
 TARGET_HEIGHT = 400
 CHECKMARK_SIZE = 80
 MARGIN = 20
 
-# 【変更点】
-# 10フレームで合計3秒にするため、1フレーム0.3秒(300ms)に設定
-# 300ms * 10frames = 3000ms (3.0秒)
+# 規定: 最短1秒〜最長4秒 / フレーム5〜20
+# 設定: 10フレーム / 0.3秒間隔 = 合計3.0秒
 FRAME_DURATION = 300 
 TOTAL_FRAMES = 10
-MAX_FILE_SIZE_KB = 300
-LOOP_COUNT = 3  # ループ回数指定
+MAX_FILE_SIZE_KB = 300 # 最大300KB
+LOOP_COUNT = 3         # 規定: 1〜4回
 
 def create_checkmark_icon(size):
-    """
-    PILを使って緑色の円と白いチェックマークを描画し、RGBA画像を返す
-    """
+    """チェックマーク画像を作成"""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-
+    
     # 緑色の円
     padding = 2
-    draw.ellipse(
-        (padding, padding, size - padding, size - padding),
-        fill=(0, 200, 0, 255),
-        outline=None
-    )
-
+    draw.ellipse((padding, padding, size - padding, size - padding), fill=(0, 200, 0, 255))
+    
     # 白いチェックマーク
     p1 = (size * 0.28, size * 0.50)
     p2 = (size * 0.45, size * 0.68)
     p3 = (size * 0.75, size * 0.35)
+    draw.line([p1, p2, p3], fill=(255, 255, 255, 255), width=int(size * 0.12), joint="curve")
     
-    # 線の描画
-    draw.line(
-        [p1, p2, p3], 
-        fill=(255, 255, 255, 255), 
-        width=int(size * 0.12), 
-        joint="curve"
-    )
-
     return img
 
 def compress_to_target_size(frames, target_kb):
     """
-    指定されたファイルサイズ以下になるまで、色数を減らしながらAPNGを生成する
+    指定サイズ以下になるまで色数を減らして圧縮する
     """
     quality_steps = [None, 256, 128, 64, 32]
-    
     final_data = None
     used_colors = "Full Color"
     
@@ -62,10 +47,10 @@ def compress_to_target_size(frames, target_kb):
             save_frames = frames
             mode_desc = "RGBA (フルカラー)"
         else:
-            # 減色処理
             save_frames = []
             for f in frames:
-                converted = f.quantize(colors=colors, method=Image.Quantize.MEDIANCUT)
+                # 【修正箇所】エラーの原因となる method指定 を削除し、デフォルト(FastOctree)を使用
+                converted = f.quantize(colors=colors)
                 save_frames.append(converted)
             mode_desc = f"{colors}色"
 
@@ -83,11 +68,13 @@ def compress_to_target_size(frames, target_kb):
         data = output_io.getvalue()
         size_kb = len(data) / 1024
         
+        # 容量チェック
         if size_kb <= target_kb:
             final_data = data
             used_colors = mode_desc
             break
-        
+            
+    # もし32色でもオーバーする場合は、最後の結果を返す
     if final_data is None:
         final_data = data
         used_colors = "32色 (サイズ超過)"
@@ -96,8 +83,19 @@ def compress_to_target_size(frames, target_kb):
 
 def process_image(uploaded_file):
     original_img = Image.open(uploaded_file).convert("RGBA")
-    base_img = original_img.resize((TARGET_WIDTH, TARGET_HEIGHT), Image.Resampling.LANCZOS)
     
+    # 1. 600x400のキャンバスを作成（背景透明）
+    base_img = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 0))
+    
+    # 2. アスペクト比を維持してリサイズし、中央に配置
+    # (画像を歪ませないための処理です)
+    original_img.thumbnail((TARGET_WIDTH, TARGET_HEIGHT), Image.Resampling.LANCZOS)
+    
+    x_offset = (TARGET_WIDTH - original_img.width) // 2
+    y_offset = (TARGET_HEIGHT - original_img.height) // 2
+    base_img.paste(original_img, (x_offset, y_offset), original_img)
+    
+    # 3. チェックマーク素材作成
     checkmark = create_checkmark_icon(CHECKMARK_SIZE)
     positions = [
         (MARGIN, MARGIN),
@@ -106,12 +104,13 @@ def process_image(uploaded_file):
         (TARGET_WIDTH - CHECKMARK_SIZE - MARGIN, TARGET_HEIGHT - CHECKMARK_SIZE - MARGIN)
     ]
     
+    # 4. フレーム画像の作成
     frame_with_checks = base_img.copy()
     for pos in positions:
         frame_with_checks.paste(checkmark, pos, checkmark)
     frame_no_checks = base_img.copy()
     
-    # 10フレーム分のシーケンス作成
+    # 5. アニメーションシーケンス作成 (10フレーム)
     raw_frames = []
     for i in range(TOTAL_FRAMES):
         if i % 2 == 0:
@@ -122,47 +121,36 @@ def process_image(uploaded_file):
     return compress_to_target_size(raw_frames, MAX_FILE_SIZE_KB)
 
 # --- UI ---
+st.set_page_config(page_title="LINE Ads APNG Generator", layout="centered")
+st.title("✅ LINE広告用 APNG生成")
+st.caption("仕様: 600x400px / 3秒 / 3回ループ / Max 300KB")
 
-st.set_page_config(page_title="APNG Generator (3sec)", layout="centered")
-
-st.title("✅ 四隅チェックマーク APNG生成")
-st.caption("仕様固定版: 10フレーム / 3秒 / 3回ループ / Max 300KB")
-
-st.markdown(f"""
-* **画像サイズ**: {TARGET_WIDTH}x{TARGET_HEIGHT}
-* **フレーム数**: {TOTAL_FRAMES}枚 (0.3秒間隔)
-* **再生時間**: {TOTAL_FRAMES * FRAME_DURATION / 1000:.1f}秒
-* **ループ**: {LOOP_COUNT}回
-* **容量**: 300KB以下自動調整
-""")
-
-uploaded_file = st.file_uploader("画像をアップロード (JPG/PNG)", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("画像をアップロード", type=["jpg", "png"])
 
 if uploaded_file:
     st.markdown("---")
     col1, col2 = st.columns(2)
-    
     with col1:
         st.subheader("元画像")
         st.image(uploaded_file, use_column_width=True)
-
-    with st.spinner("生成中..."):
+    
+    with st.spinner("処理中..."):
         apng_bytes, used_colors, final_size_kb = process_image(uploaded_file)
     
     with col2:
-        st.subheader("生成結果")
+        st.subheader("生成結果 (600x400)")
         st.image(apng_bytes, caption="プレビュー", use_column_width=True)
         
         if final_size_kb <= MAX_FILE_SIZE_KB:
-            st.success(f"✅ 容量: {final_size_kb:.1f} KB (OK)")
+            st.success(f"容量: {final_size_kb:.1f} KB (OK)")
         else:
-            st.error(f"⚠️ 容量: {final_size_kb:.1f} KB (300KBを超過)")
-            
+            st.error(f"容量: {final_size_kb:.1f} KB (規定超過)")
+        
         st.info(f"画質: {used_colors}")
-
+        
         st.download_button(
-            label="APNGをダウンロード",
+            label="ダウンロード",
             data=apng_bytes,
-            file_name="checked_anim_3sec.png",
+            file_name="line_ads_600x400.png",
             mime="image/png"
         )
