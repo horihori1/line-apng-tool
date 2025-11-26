@@ -8,12 +8,13 @@ TARGET_HEIGHT = 400
 CHECKMARK_SIZE = 80
 MARGIN = 20
 
-# 規定: 最短1秒〜最長4秒 / フレーム5〜20
-# 設定: 10フレーム / 0.3秒間隔 = 合計3.0秒
-FRAME_DURATION = 300 
-TOTAL_FRAMES = 10
-MAX_FILE_SIZE_KB = 300 # 最大300KB
-LOOP_COUNT = 3         # 規定: 1〜4回
+# 要件: 1秒あたり5フレーム / 合計4秒 / 4ループ
+# 計算: 1000ms / 5fps = 200ms (1フレームの時間)
+#       5fps * 4秒 = 20フレーム (総フレーム数)
+FRAME_DURATION = 200 
+TOTAL_FRAMES = 20
+LOOP_COUNT = 4
+MAX_FILE_SIZE_KB = 300 
 
 def create_checkmark_icon(size):
     """チェックマーク画像を作成"""
@@ -36,7 +37,8 @@ def compress_to_target_size(frames, target_kb):
     """
     指定サイズ以下になるまで色数を減らして圧縮する
     """
-    quality_steps = [None, 256, 128, 64, 32]
+    # フレーム数が増えたため(20枚)、圧縮が必要になる可能性が高くなります
+    quality_steps = [None, 256, 128, 64, 32, 16] 
     final_data = None
     used_colors = "Full Color"
     
@@ -49,7 +51,7 @@ def compress_to_target_size(frames, target_kb):
         else:
             save_frames = []
             for f in frames:
-                # 【修正箇所】エラーの原因となる method指定 を削除し、デフォルト(FastOctree)を使用
+                # エラー回避のためデフォルト設定で減色
                 converted = f.quantize(colors=colors)
                 save_frames.append(converted)
             mode_desc = f"{colors}色"
@@ -74,10 +76,10 @@ def compress_to_target_size(frames, target_kb):
             used_colors = mode_desc
             break
             
-    # もし32色でもオーバーする場合は、最後の結果を返す
+    # もし圧縮してもオーバーする場合は、もっとも圧縮されたものを返す
     if final_data is None:
         final_data = data
-        used_colors = "32色 (サイズ超過)"
+        used_colors = "規定超過 (さらに減色が必要)"
 
     return final_data, used_colors, len(final_data)/1024
 
@@ -88,7 +90,6 @@ def process_image(uploaded_file):
     base_img = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 0))
     
     # 2. アスペクト比を維持してリサイズし、中央に配置
-    # (画像を歪ませないための処理です)
     original_img.thumbnail((TARGET_WIDTH, TARGET_HEIGHT), Image.Resampling.LANCZOS)
     
     x_offset = (TARGET_WIDTH - original_img.width) // 2
@@ -110,9 +111,12 @@ def process_image(uploaded_file):
         frame_with_checks.paste(checkmark, pos, checkmark)
     frame_no_checks = base_img.copy()
     
-    # 5. アニメーションシーケンス作成 (10フレーム)
+    # 5. アニメーションシーケンス作成 (20フレーム)
     raw_frames = []
     for i in range(TOTAL_FRAMES):
+        # 5fpsなので点滅速度が速くなりすぎないよう調整が必要ですが、
+        # 今までのロジック(偶数ON/奇数OFF)だと 0.2秒ごとにチカチカ切り替わります。
+        # 点滅としては適切な速度です。
         if i % 2 == 0:
             raw_frames.append(frame_with_checks)
         else:
@@ -123,7 +127,7 @@ def process_image(uploaded_file):
 # --- UI ---
 st.set_page_config(page_title="LINE Ads APNG Generator", layout="centered")
 st.title("✅ LINE広告用 APNG生成")
-st.caption("仕様: 600x400px / 3秒 / 3回ループ / Max 300KB")
+st.caption("仕様: 600x400px / 4秒 (5fps) / 4回ループ / Max 300KB")
 
 uploaded_file = st.file_uploader("画像をアップロード", type=["jpg", "png"])
 
@@ -134,12 +138,12 @@ if uploaded_file:
         st.subheader("元画像")
         st.image(uploaded_file, use_column_width=True)
     
-    with st.spinner("処理中..."):
+    with st.spinner("生成中 (フレーム数増加のため処理に時間がかかります)..."):
         apng_bytes, used_colors, final_size_kb = process_image(uploaded_file)
     
     with col2:
-        st.subheader("生成結果 (600x400)")
-        st.image(apng_bytes, caption="プレビュー", use_column_width=True)
+        st.subheader("生成結果")
+        st.image(apng_bytes, caption="プレビュー (0.2秒間隔で点滅)", use_column_width=True)
         
         if final_size_kb <= MAX_FILE_SIZE_KB:
             st.success(f"容量: {final_size_kb:.1f} KB (OK)")
@@ -151,6 +155,6 @@ if uploaded_file:
         st.download_button(
             label="ダウンロード",
             data=apng_bytes,
-            file_name="line_ads_600x400.png",
+            file_name="line_ads_4sec_20frames.png",
             mime="image/png"
         )
