@@ -2,9 +2,6 @@ import streamlit as st
 from PIL import Image, ImageDraw
 import io
 
-# --- ページ設定 ---
-st.set_page_config(page_title="LINE Ads APNG Tool", layout="centered")
-
 # --- 設定 (固定値) ---
 # LINE規定: 600x400, 300KB以下
 TARGET_WIDTH = 600
@@ -13,10 +10,10 @@ CHECKMARK_SIZE = 80
 MARGIN = 20
 MAX_FILE_SIZE_KB = 300
 
-# 【今回の変更点】
-# 5フレーム (1秒)
-# 2ループ
-FIXED_TOTAL_FRAMES = 5
+# 【固定設定】
+# 10フレーム / 5fps = 2.0秒再生
+# ループ2回
+FIXED_TOTAL_FRAMES = 10
 FIXED_LOOP_COUNT = 2
 FPS = 5
 FRAME_DURATION_MS = int(1000 / FPS) # 200ms
@@ -26,7 +23,7 @@ def create_checkmark_icon(size):
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    # 緑色の円
+    # 緑色の円 (鮮やかな緑)
     padding = 2
     draw.ellipse((padding, padding, size - padding, size - padding), fill=(0, 200, 0, 255))
     
@@ -40,35 +37,31 @@ def create_checkmark_icon(size):
 
 def compress_to_target_size(frames):
     """
-    容量圧縮ロジック (安全版)
+    容量圧縮ロジック (フルカラー優先)
+    設定が固定されたため、引数からdurationなどを削除し定数を使用
     """
-    # 圧縮レベル設定
-    compression_levels = [
-        {"colors": None, "label": "最高画質 (フルカラー)"},
-        {"colors": 256, "label": "高画質 (256色)"},
-        {"colors": 128, "label": "中画質 (128色)"},
-        {"colors": 64,  "label": "圧縮 (64色)"},
-        {"colors": 32,  "label": "強力圧縮 (32色)"},
-        {"colors": 16,  "label": "最大圧縮 (16色)"}
-    ]
+    # 試行順序: フルカラー優先
+    quality_steps = [None, 256, 128, 64, 32]
     
     final_data = None
-    used_setting = ""
+    used_colors = "Full Color"
     
-    for setting in compression_levels:
+    for colors in quality_steps:
         output_io = io.BytesIO()
-        save_frames = []
         
-        if setting["colors"] is None:
-            # フルカラー
+        save_frames = []
+        if colors is None:
+            # フルカラーモード (RGBA) - ここが最優先されます
             save_frames = frames
+            mode_desc = "RGBA (フルカラー/元画像の色維持)"
         else:
-            # 減色処理 (エラー回避のためシンプルな記述)
+            # 減色モード (容量削減のため)
             for f in frames:
-                converted = f.quantize(colors=setting["colors"])
+                converted = f.quantize(colors=colors, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.FLOYDSTEINBERG)
                 save_frames.append(converted)
+            mode_desc = f"{colors}色 (減色圧縮)"
 
-        # APNG保存
+        # APNG保存 (固定値を使用)
         save_frames[0].save(
             output_io,
             format="PNG",
@@ -82,17 +75,18 @@ def compress_to_target_size(frames):
         data = output_io.getvalue()
         size_kb = len(data) / 1024
         
-        # 300KB以下なら採用
+        # 容量チェック: 規定内なら即採用して終了
         if size_kb <= MAX_FILE_SIZE_KB:
             final_data = data
-            used_setting = setting["label"]
+            used_colors = mode_desc
             break
             
+    # 規定オーバー時の最終手段
     if final_data is None:
         final_data = data
-        used_setting = "規定超過"
+        used_colors = "規定超過"
 
-    return final_data, used_setting, len(final_data)/1024
+    return final_data, used_colors, len(final_data)/1024
 
 def process_image(uploaded_file):
     original_img = Image.open(uploaded_file).convert("RGBA")
@@ -119,8 +113,7 @@ def process_image(uploaded_file):
         frame_with.paste(checkmark, pos, checkmark)
     frame_no = base_img.copy()
     
-    # シーケンス作成 (5フレーム)
-    # 0:ON, 1:OFF, 2:ON, 3:OFF, 4:ON
+    # シーケンス作成 (10フレーム固定)
     raw_frames = []
     for i in range(FIXED_TOTAL_FRAMES):
         if i % 2 == 0:
@@ -131,13 +124,15 @@ def process_image(uploaded_file):
     return compress_to_target_size(raw_frames)
 
 # --- UI ---
+st.set_page_config(page_title="LINE Ads APNG Tool (Fixed)", layout="centered")
 
-st.title("✅ LINE広告用 APNG生成")
+st.title("✅ LINE広告用 APNG生成（設定固定版）")
 st.markdown(f"""
-以下の仕様で生成し、**300KB以下になるよう自動で圧縮**します。
+以下の仕様で固定して生成します。色味は可能な限り維持されます。
 * **画像サイズ**: 600x400 px
-* **フレーム数**: {FIXED_TOTAL_FRAMES}枚 (1秒)
+* **フレーム数**: {FIXED_TOTAL_FRAMES}枚 (約{FIXED_TOTAL_FRAMES/FPS:.1f}秒)
 * **ループ回数**: {FIXED_LOOP_COUNT}回
+* **容量**: 300KB以下 (自動調整)
 """)
 
 uploaded_file = st.file_uploader("画像をアップロード (JPG/PNG)", type=["jpg", "png"])
@@ -148,12 +143,13 @@ if uploaded_file:
     with col1:
         st.image(uploaded_file, caption="元画像", use_column_width=True)
 
-    if st.button("生成する"):
+    if st.button("この画像でAPNGを生成する"):
         with st.spinner("生成中..."):
-            apng_bytes, used_setting, final_size_kb = process_image(uploaded_file)
+            # 引数を削除し、固定設定で処理
+            apng_bytes, used_colors, final_size_kb = process_image(uploaded_file)
         
         with col2:
-            st.image(apng_bytes, caption=f"生成結果: {used_setting}", use_column_width=True)
+            st.image(apng_bytes, caption=f"生成結果 ({used_colors})", use_column_width=True)
             
             if final_size_kb <= MAX_FILE_SIZE_KB:
                 st.success(f"容量: {final_size_kb:.1f} KB (OK)")
@@ -163,6 +159,6 @@ if uploaded_file:
             st.download_button(
                 label="ダウンロード",
                 data=apng_bytes,
-                file_name="line_ads_5frames.png",
+                file_name="line_ads_fixed_10frames.png",
                 mime="image/png"
             )
