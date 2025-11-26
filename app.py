@@ -2,7 +2,7 @@ import streamlit as st
 from PIL import Image, ImageDraw
 import io
 
-# --- ページ設定 (必ず一番最初に書く必要があります) ---
+# --- ページ設定 (必ず一番最初に書く) ---
 st.set_page_config(page_title="LINE Ads APNG Tool", layout="centered")
 
 # --- 設定 (固定値) ---
@@ -40,18 +40,18 @@ def create_checkmark_icon(size):
 
 def compress_to_target_size(frames):
     """
-    【強化版】容量圧縮ロジック
-    300KBに収まるまで、段階的に画質設定を下げて再生成を繰り返す
+    【修正版】容量圧縮ロジック
+    エラーの原因となるMEDIANCUT指定を廃止し、安全なデフォルト方式で減色を行う
     """
     
-    # 圧縮設定のリスト
+    # 圧縮設定リスト (色数のみを指定)
     compression_levels = [
-        {"colors": None, "dither": None, "label": "最高画質 (フルカラー)"},
-        {"colors": 256, "dither": Image.Dither.FLOYDSTEINBERG, "label": "高画質 (256色)"},
-        {"colors": 128, "dither": Image.Dither.FLOYDSTEINBERG, "label": "中画質 (128色)"},
-        {"colors": 64,  "dither": None, "label": "圧縮 (64色/ノイズ除去)"},
-        {"colors": 32,  "dither": None, "label": "強力圧縮 (32色)"},
-        {"colors": 16,  "dither": None, "label": "最大圧縮 (16色)"}
+        {"colors": None, "label": "最高画質 (フルカラー)"},
+        {"colors": 256, "label": "高画質 (256色)"},
+        {"colors": 128, "label": "中画質 (128色)"},
+        {"colors": 64,  "label": "圧縮 (64色)"},
+        {"colors": 32,  "label": "強力圧縮 (32色)"},
+        {"colors": 16,  "label": "最大圧縮 (16色)"}
     ]
     
     final_data = None
@@ -63,15 +63,13 @@ def compress_to_target_size(frames):
         
         # フレーム変換
         if setting["colors"] is None:
-            # フルカラー
+            # フルカラー (RGBA)
             save_frames = frames
         else:
-            # 減色処理
+            # 減色処理 (安全なデフォルトメソッドを使用)
             for f in frames:
-                if setting["dither"]:
-                    converted = f.quantize(colors=setting["colors"], method=Image.Quantize.MEDIANCUT, dither=setting["dither"])
-                else:
-                    converted = f.quantize(colors=setting["colors"], method=Image.Quantize.MEDIANCUT)
+                # ここをシンプルにすることでエラーを回避
+                converted = f.quantize(colors=setting["colors"])
                 save_frames.append(converted)
 
         # APNG保存
