@@ -2,7 +2,7 @@ import streamlit as st
 from PIL import Image, ImageDraw
 import io
 
-# --- ページ設定 (必ず一番最初に書く) ---
+# --- ページ設定 ---
 st.set_page_config(page_title="LINE Ads APNG Tool", layout="centered")
 
 # --- 設定 (固定値) ---
@@ -13,10 +13,10 @@ CHECKMARK_SIZE = 80
 MARGIN = 20
 MAX_FILE_SIZE_KB = 300
 
-# 【固定設定】
-# 10フレーム / 5fps = 2.0秒再生
-# ループ2回
-FIXED_TOTAL_FRAMES = 10
+# 【今回の変更点】
+# 5フレーム (1秒)
+# 2ループ
+FIXED_TOTAL_FRAMES = 5
 FIXED_LOOP_COUNT = 2
 FPS = 5
 FRAME_DURATION_MS = int(1000 / FPS) # 200ms
@@ -26,7 +26,7 @@ def create_checkmark_icon(size):
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
-    # 緑色の円 (鮮やかな緑)
+    # 緑色の円
     padding = 2
     draw.ellipse((padding, padding, size - padding, size - padding), fill=(0, 200, 0, 255))
     
@@ -40,11 +40,9 @@ def create_checkmark_icon(size):
 
 def compress_to_target_size(frames):
     """
-    【修正版】容量圧縮ロジック
-    エラーの原因となるMEDIANCUT指定を廃止し、安全なデフォルト方式で減色を行う
+    容量圧縮ロジック (安全版)
     """
-    
-    # 圧縮設定リスト (色数のみを指定)
+    # 圧縮レベル設定
     compression_levels = [
         {"colors": None, "label": "最高画質 (フルカラー)"},
         {"colors": 256, "label": "高画質 (256色)"},
@@ -61,14 +59,12 @@ def compress_to_target_size(frames):
         output_io = io.BytesIO()
         save_frames = []
         
-        # フレーム変換
         if setting["colors"] is None:
-            # フルカラー (RGBA)
+            # フルカラー
             save_frames = frames
         else:
-            # 減色処理 (安全なデフォルトメソッドを使用)
+            # 減色処理 (エラー回避のためシンプルな記述)
             for f in frames:
-                # ここをシンプルにすることでエラーを回避
                 converted = f.quantize(colors=setting["colors"])
                 save_frames.append(converted)
 
@@ -92,10 +88,9 @@ def compress_to_target_size(frames):
             used_setting = setting["label"]
             break
             
-    # 全てダメだった場合の最終手段
     if final_data is None:
         final_data = data
-        used_setting = "規定超過 (これ以上圧縮不可)"
+        used_setting = "規定超過"
 
     return final_data, used_setting, len(final_data)/1024
 
@@ -104,7 +99,6 @@ def process_image(uploaded_file):
     
     # 1. ベース画像の作成
     base_img = Image.new("RGBA", (TARGET_WIDTH, TARGET_HEIGHT), (0, 0, 0, 0))
-    # リサイズ（アスペクト比維持）
     original_img.thumbnail((TARGET_WIDTH, TARGET_HEIGHT), Image.Resampling.LANCZOS)
     x = (TARGET_WIDTH - original_img.width) // 2
     y = (TARGET_HEIGHT - original_img.height) // 2
@@ -125,7 +119,8 @@ def process_image(uploaded_file):
         frame_with.paste(checkmark, pos, checkmark)
     frame_no = base_img.copy()
     
-    # シーケンス作成 (10フレーム固定)
+    # シーケンス作成 (5フレーム)
+    # 0:ON, 1:OFF, 2:ON, 3:OFF, 4:ON
     raw_frames = []
     for i in range(FIXED_TOTAL_FRAMES):
         if i % 2 == 0:
@@ -141,7 +136,7 @@ st.title("✅ LINE広告用 APNG生成")
 st.markdown(f"""
 以下の仕様で生成し、**300KB以下になるよう自動で圧縮**します。
 * **画像サイズ**: 600x400 px
-* **フレーム数**: {FIXED_TOTAL_FRAMES}枚 (2秒)
+* **フレーム数**: {FIXED_TOTAL_FRAMES}枚 (1秒)
 * **ループ回数**: {FIXED_LOOP_COUNT}回
 """)
 
@@ -154,7 +149,7 @@ if uploaded_file:
         st.image(uploaded_file, caption="元画像", use_column_width=True)
 
     if st.button("生成する"):
-        with st.spinner("生成・圧縮計算中..."):
+        with st.spinner("生成中..."):
             apng_bytes, used_setting, final_size_kb = process_image(uploaded_file)
         
         with col2:
@@ -164,11 +159,10 @@ if uploaded_file:
                 st.success(f"容量: {final_size_kb:.1f} KB (OK)")
             else:
                 st.error(f"容量: {final_size_kb:.1f} KB (超過)")
-                st.caption("画像が複雑すぎて最小画質でも300KBを超えました。")
                 
             st.download_button(
                 label="ダウンロード",
                 data=apng_bytes,
-                file_name="line_ads_compressed.png",
+                file_name="line_ads_5frames.png",
                 mime="image/png"
             )
